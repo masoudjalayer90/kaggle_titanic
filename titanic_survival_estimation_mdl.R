@@ -182,6 +182,7 @@ default_rmse <- sqrt(model_rforrest1$prediction.error)
 
 
 fitted_results_rforrest1 <- predict(model_rforrest1, data = df_test)
+fitted_results_rforrest1$predictions <- ifelse(fitted_results_rforrest1$predictions > 0.5, 1, 0)
 
 miss_classified_rforrest1 <- mean(fitted_results_rforrest1$predictions != df_test$Survived)
 paste(print((1-miss_classified_rforrest1)*100),'%',' Accurate')
@@ -191,7 +192,7 @@ plot.roc(df_test$Survived, fitted_results_rforrest1$predictions, main = 'random_
 
 
 # create hyperparameter grid with the parameters to be tuned
- hyper_grid <- 
+hyper_grid <- 
    expand.grid(mtry = floor(n_features * c( 0.15, 0.25, 0.33, 0.4, 0.5)), 
                min_node_size = c(1,3 , 5, 10), 
                replace = c(TRUE, FALSE), 
@@ -229,14 +230,17 @@ model_rforrest2 <- ranger(Survived ~ . ,
                           min.node.size = 3, 
                           replace = F, 
                           sample.fraction = 0.63,
-                          respect.unordered.factors = 'order', 
-                          classification = TRUE,
+                          respect.unordered.factors = 'order',
                           mtry = 2)
 
 fitted_results_rforrest2  <- predict(model_rforrest2, data = df_test)
 
+fitted_results_rforrest2$predictions <- ifelse(fitted_results_rforrest2$predictions > 0.5, 1, 0)
+
 miss_classified_rforrest2 <- mean(fitted_results_rforrest2$predictions != df_test$Survived)
 paste(print((1-miss_classified_rforrest2)*100),'%',' Accurate')
+
+
 
 # ROC curve
 plot.roc(df_test$Survived, fitted_results_rforrest2$predictions, main = 'random_forrest_tweaked_model')
