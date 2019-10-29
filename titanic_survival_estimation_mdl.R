@@ -31,16 +31,80 @@ setwd('C:/Users/chemaja/Documents/Personal/kaggle/Titanic/data')
 test_raw <- read.csv('test.csv', na.strings = c(''))
 train_raw <- read.csv('train.csv', na.strings = c(''))
 
+# data exploration
 glimpse(train_raw)
 summary(train_raw)
+
+ggplot(train_raw, aes(Sex)) + 
+  geom_bar(aes(fill = as.factor(Survived))) + 
+  labs(title = 'Gender vs Survived')
+
+ggplot(train_raw, aes(Sex)) + 
+  geom_bar(aes(fill = as.factor(Embarked))) + 
+  labs(title = 'Embarked vs Survived')
+
+ggplot(train_raw, aes(Age)) + 
+  geom_histogram(aes(fill = as.factor(Survived)),binwidth = 0.5) +
+  labs(title = 'Age vs Survived')
+
+ggplot(train_raw, aes(Fare)) + 
+  geom_histogram(aes(fill = as.factor(Survived)),binwidth = 5) +
+  labs(title = 'Fare vs Survived')
+
+ggplot(train_raw, aes(as.factor(SibSp))) + 
+  geom_bar(aes(fill = as.factor(Survived))) + 
+  labs(title = 'SibSp vs Survived')
+
+# creating titles
+View(
+  train_raw %>% 
+      mutate(pos1 = regexpr(',', Name) +1, 
+             pos2 = regexpr('\\.', Name)-1, 
+             Title = substr(Name,pos1, pos2)) %>% 
+      group_by(Title) %>% 
+      summarise(count = n_distinct(PassengerId)) %>% 
+      arrange(-count)
+    )
+
+train_raw <-
+  train_raw %>% 
+  mutate(pos1 = regexpr(',', Name) +1, 
+         pos2 = regexpr('\\.', Name)-1, 
+         Title = substr(Name,pos1, pos2))
+
+test_raw <-
+  test_raw %>% 
+  mutate(pos1 = regexpr(',', Name) +1, 
+         pos2 = regexpr('\\.', Name)-1, 
+         Title = substr(Name,pos1, pos2))
 
 # data clean
 sapply(train_raw, function(x) sum(is.na(x)))
 sapply(train_raw, function(x) length(unique(x)))
 
+
 missmap(train_raw)
 
-df <- subset(train_raw, select = c(2, 3, 5, 6, 7, 8, 10, 12))
+df <- subset(train_raw, select = c(2, 3, 5, 6, 7, 8, 10, 12,15))
+
+df$Title <- trimws(df$Title, which = c("both"))
+
+officer <- c('Capt', 'Col', 'Major', 'Dr', 'Rev')
+royalty <- c('Jonkheer', 'Sir', 'Don', 'the Countess','Lady')
+mrs <- c('Mme', 'Ms', 'Mrs')
+miss <-  c('Mlle', 'Miss')
+mr <- c('Mr')
+master <- c('Master')
+
+
+df <- 
+  df %>% 
+  mutate(Title = case_when(Title %in% c('Capt', 'Col', 'Major', 'Dr', 'Rev') ~ 'Officer', 
+                           Title %in% royalty ~ 'Royalty', 
+                           Title %in% mrs ~ 'Mrs', 
+                           Title %in% miss ~ 'Miss', 
+                           Title %in% mr ~ 'Mr', 
+                           Title %in% master ~ 'Master')) 
 
 df$Age[is.na(df$Age)] <- mean(df$Age, na.rm = TRUE)
 
@@ -62,13 +126,13 @@ anova(model_glm, test = 'Chisq')
 
 pR2(model_glm)
 
-glimpse(df_test)
-
-fitted_results_glm <- predict(model_glm, newdata = subset(df_test, select = c(2,3,4,5,6,7,8)), type = 'response')
+fitted_results_glm <- predict(model_glm, 
+                              newdata = subset(df_test, select = c(2,3,4,5,6,7,8,9)), 
+                              type = 'response')
 
 fitted_results_glm <- ifelse(fitted_results_glm > 0.5, 1, 0)
 
-miss_classified_glm <- mean(fitted_results != df_test$Survived)
+miss_classified_glm <- mean(fitted_results_glm != df_test$Survived)
 paste(print((1-miss_classified_glm)*100),'%',' Accurate')
 
 # ROC curve
@@ -93,7 +157,7 @@ rpart.plot(model_tree_pruned)
 
 fitted_results_tree <- predict(model_tree_pruned, newdata = df_test)
 
-# fitted_results_tree <- ifelse(fitted_results_tree > 0.5, 1, 0)
+fitted_results_tree <- ifelse(fitted_results_tree > 0.5, 1, 0)
 miss_classified_tree <- mean(fitted_results_tree != df_test$Survived)
 paste(print((1-miss_classified_tree)*100),'%',' Accurate')
 
@@ -205,7 +269,7 @@ hyper_grid <-
 
 for(i in seq_len(nrow(hyper_grid))){
 fit <- 
-    ranger(Survived ~ ., 
+    ranger(Survived ~ .-Title, 
            data = df_train, 
            num.trees = n_features * 10, 
            mtry = hyper_grid$mtry[i], 
@@ -225,13 +289,14 @@ hyper_grid %>%
   head(10)
 
 
-model_rforrest2 <- ranger(Survived ~ . , 
+model_rforrest2 <- ranger(Survived ~ . -Title, 
                           data = df_train,
-                          min.node.size = 3, 
-                          replace = F, 
-                          sample.fraction = 0.63,
-                          respect.unordered.factors = 'order',
-                          mtry = 2)
+                          min.node.size = hyper_grid$min_node_size[1], 
+                          replace = hyper_grid$replace[1], 
+                          sample.fraction = hyper_grid$sample.fraction[1],
+                          mtry = hyper_grid$mtry[1], 
+                          respect.unordered.factors = 'order', 
+                          num.trees = )
 
 fitted_results_rforrest2  <- predict(model_rforrest2, data = df_test)
 
@@ -247,3 +312,26 @@ plot.roc(df_test$Survived, fitted_results_rforrest2$predictions, main = 'random_
 
 
 
+
+# test data survial
+glimpse(test_raw)
+
+test_raw$Age[is.na(test_raw$Age)] <- mean(test_raw$Age, na.rm = TRUE)
+test_raw$Fare[is.na(test_raw$Fare)] <- mean(test_raw$Fare, na.rm = TRUE)
+
+output <- subset(test_raw, select = c('PassengerId'))
+
+fitted_results <- predict(model_rforrest2, data = test_raw)
+
+output$survived <- fitted_results$predictions
+
+output$survived <- ifelse(output$survived > 0.5, 1, 0)
+
+
+output %>% 
+  group_by(survived) %>% 
+  summarise(n_distinct(PassengerId))
+
+getwd()
+setwd('C:/Users/chemaja/Documents/Personal/kaggle/Titanic/OUT')
+write.csv(output, 'titanic_output.csv', row.names = FALSE)
