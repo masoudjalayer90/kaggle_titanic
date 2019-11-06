@@ -6,6 +6,7 @@ library(caTools)
 library(pscl)
 library(pROC)
 library(ggplot2)
+library(rsample)
 
 # decision trees 
 library(rpart)
@@ -21,7 +22,7 @@ library(caret)
 library(h2o)
 library(ranger)
 
-
+# rm(list = ls(all.names = TRUE))
 
 getwd()
 setwd('C:/Users/chemaja/Documents/Personal/kaggle/Titanic/data')
@@ -91,11 +92,10 @@ df$Title <- trimws(df$Title, which = c("both"))
 
 officer <- c('Capt', 'Col', 'Major', 'Dr', 'Rev')
 royalty <- c('Jonkheer', 'Sir', 'Don', 'the Countess','Lady')
-mrs <- c('Mme', 'Ms', 'Mrs')
+mrs <- c('Mme', 'Ms', 'Mrs', 'Dona')
 miss <-  c('Mlle', 'Miss')
 mr <- c('Mr')
 master <- c('Master')
-
 
 df <- 
   df %>% 
@@ -110,10 +110,16 @@ df$Age[is.na(df$Age)] <- mean(df$Age, na.rm = TRUE)
 
 df <- df[!is.na(df$Embarked),]
  
-split <- sample.split(df, SplitRatio = 0.8)
 
-df_train <- subset(df, split == TRUE)
-df_test <- subset(df,split == FALSE)
+# splitting data 
+table(df$Survived) %>% 
+  prop.table()
+
+split_strat <- initial_split(df, prop = 0.7, 
+                             strata = 'Survived')
+
+df_train <- training(split_strat)
+df_test <- testing(split_strat)
 
 # simple log regression model ----------------------------
  
@@ -180,7 +186,7 @@ model_bagging2 <- caret::train(
   data = df_train,
   method = "treebag",
   trControl = trainControl(method = "cv", number = 10),
-  nbagg = 500,  
+  nbagg = 200,  
   control = rpart.control(minsplit = 2, cp = 0)
 )
 
@@ -257,10 +263,12 @@ plot.roc(df_test$Survived, fitted_results_rforrest1$predictions, main = 'random_
 
 # create hyperparameter grid with the parameters to be tuned
 hyper_grid <- 
-   expand.grid(mtry = floor(n_features * c( 0.15, 0.25, 0.33, 0.4, 0.5)), 
-               min_node_size = c(1,3 , 5, 10), 
+   expand.grid(mtry = c(3:8), 
+               num.trees = n_features * c(10:15), 
+               min_node_size = c(3:8), 
                replace = c(TRUE, FALSE), 
-               sample.fraction = c(0.5, 0.63, 0.8, 0.85, 0.9, 0.95), 
+               classification = c(TRUE, FALSE),
+               sample.fraction = c(0.4,0.45,0.5,0.55,0.6, 0.63), 
                rmse = NA
                )
 
@@ -269,34 +277,39 @@ hyper_grid <-
 
 for(i in seq_len(nrow(hyper_grid))){
 fit <- 
-    ranger(Survived ~ .-Title, 
+    ranger(Survived ~ ., 
            data = df_train, 
-           num.trees = n_features * 10, 
+           num.trees = hyper_grid$num.trees[i], 
            mtry = hyper_grid$mtry[i], 
            min.node.size = hyper_grid$min_node_size[i], 
            replace = hyper_grid$replace[i], 
            sample.fraction = hyper_grid$sample.fraction[i], 
-           verbose = FALSE, 
-           respect.unordered.factors = 'order', 
+           classification = hyper_grid$classification[i],
            seed = 123
            )
   hyper_grid$rmse[i] <- sqrt(fit$prediction.error)
     }
 
-hyper_grid %>% 
+
+hyper_grid <-
+  hyper_grid %>% 
   arrange(rmse) %>% 
   mutate(perc_gain = (default_rmse - rmse)/ default_rmse * 100) %>% 
   head(10)
 
 
-model_rforrest2 <- ranger(Survived ~ . -Title, 
+
+model_rforrest2 <- ranger(Survived ~ . , 
                           data = df_train,
                           min.node.size = hyper_grid$min_node_size[1], 
                           replace = hyper_grid$replace[1], 
                           sample.fraction = hyper_grid$sample.fraction[1],
                           mtry = hyper_grid$mtry[1], 
-                          respect.unordered.factors = 'order', 
-                          num.trees = )
+                          classification = hyper_grid$classification[1],
+                          num.trees = hyper_grid$num.trees[1],
+                          respect.unordered.factors = 'order')
+
+
 
 fitted_results_rforrest2  <- predict(model_rforrest2, data = df_test)
 
@@ -306,24 +319,46 @@ miss_classified_rforrest2 <- mean(fitted_results_rforrest2$predictions != df_tes
 paste(print((1-miss_classified_rforrest2)*100),'%',' Accurate')
 
 
+sqrt(model_rforrest1$prediction.error)
+sqrt(model_rforrest2$prediction.error)
 
 # ROC curve
 plot.roc(df_test$Survived, fitted_results_rforrest2$predictions, main = 'random_forrest_tweaked_model')
 
 
 
-
 # test data survial
 glimpse(test_raw)
+sapply(test_raw, function(x) sum(is.na(x)))
+
 
 test_raw$Age[is.na(test_raw$Age)] <- mean(test_raw$Age, na.rm = TRUE)
 test_raw$Fare[is.na(test_raw$Fare)] <- mean(test_raw$Fare, na.rm = TRUE)
 
+
+test_raw$Title <- trimws(test_raw$Title, which = c("both"))
+
+test_raw <- 
+  test_raw %>% 
+  mutate(Title = case_when(Title %in% officer ~ 'Officer', 
+                           Title %in% royalty ~ 'Royalty', 
+                           Title %in% mrs ~ 'Mrs',
+                           Title %in% miss ~ 'Miss', 
+                           Title %in% mr ~ 'Mr', 
+                           Title %in% master ~ 'Master'))
+
+
+
 output <- subset(test_raw, select = c('PassengerId'))
 
-fitted_results <- predict(model_rforrest2, data = test_raw)
+test_raw %>% 
+  group_by(Title) %>% 
+  summarise(n_distinct(PassengerId))
 
-output$survived <- fitted_results$predictions
+
+predictions <- predict(model_rforrest2, data = test_raw)
+
+output$survived <- predictions$predictions
 
 output$survived <- ifelse(output$survived > 0.5, 1, 0)
 
